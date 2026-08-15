@@ -18,11 +18,23 @@ LookLab WB retains the established WB Source -> Target matrices and Tint fixes. 
 
 `Camera/CST -> LookLab WB -> FilmMatrix -> Advanced Toner -> Lens/optical -> Keystone -> ODT`
 
+Recommended Resolve node tree:
+
+1. Camera/CST or input transform
+2. **LookLab WB** for source/target white balance and tint
+3. FilmMatrix or film-matrix prep
+4. [Advanced Toner](https://github.com/wbrisenold/AdvancedToner) for environmental palette and narrative color
+5. [PresenceOFX](https://github.com/wbrisenold/PresenceOFX) for lens/optical presence
+6. [Keystone](https://github.com/wbrisenold/Keystone) for primary balance, tone, color volume, and cleanup
+7. LookLab creative/full-grade stage, when used
+8. [LUTManagerOFX](https://github.com/wbrisenold/LUTManagerOFX) as an optional look-LUT browser/audition node before ODT
+9. ODT/display transform
+
 - **LookLab WB**: source/target white balance + tint.
 - **Advanced Toner**: palette/environment.
 - **Keystone**: primary balance and technical grade.
 
-Companion OFX tools in the same system: **PresenceOFX** provides the lens/optical presence stage, and **LUTManagerOFX** provides folder-backed LUT browsing for look management.
+Companion repositories in the same system: [Advanced Toner](https://github.com/wbrisenold/AdvancedToner), [Keystone](https://github.com/wbrisenold/Keystone), [PresenceOFX](https://github.com/wbrisenold/PresenceOFX), and [LUTManagerOFX](https://github.com/wbrisenold/LUTManagerOFX).
 
 ## Install
 
