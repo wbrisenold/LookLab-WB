@@ -1,0 +1,241 @@
+// LookLab-WB-v3.0.dctl
+// LookLab WB-only rebuild.
+//
+// INPUT : ARRI Wide Gamut 3 / LogC3 EI800
+// OUTPUT: ARRI Wide Gamut 3 / LogC3 EI800
+//
+// INTENDED NODE ORDER:
+// CST -> LookLab WB -> PD LogC3 FilmMatrix -> LensNode -> Keystone -> ODT
+//
+// v3.0 removes all Start presets, creative looks, FilmMatrix precompensation,
+// Matrix Fix, Technical Safety, strength controls, and shared creative finishing.
+// It retains only the established WB Source -> Target matrices and Tint fixes
+// from LookLab-Presets-v2.1.
+//
+// Neutral state is an exact bypass:
+// WB Target Off + Tint Off returns the input code values unchanged.
+//
+// SPDX-License-Identifier: MIT
+
+// ---------------- WHITE BALANCE ----------------
+DEFINE_UI_PARAMS(wb_source, WB / Source, DCTLUI_COMBO_BOX, 16, {WB_SRC_2200, WB_SRC_2400, WB_SRC_2600, WB_SRC_2800, WB_SRC_3000, WB_SRC_3200, WB_SRC_3400, WB_SRC_3600, WB_SRC_3800, WB_SRC_4000, WB_SRC_4300, WB_SRC_4500, WB_SRC_4800, WB_SRC_5000, WB_SRC_5200, WB_SRC_5500, WB_SRC_5600, WB_SRC_6000, WB_SRC_6500, WB_SRC_7000, WB_SRC_7500, WB_SRC_8000, WB_SRC_8500, WB_SRC_9000, WB_SRC_10000}, {2200K, 2400K, 2600K, 2800K, 3000K, 3200K, 3400K, 3600K, 3800K, 4000K, 4300K, 4500K, 4800K, 5000K, 5200K, 5500K, 5600K, 6000K, 6500K, 7000K, 7500K, 8000K, 8500K, 9000K, 10000K})
+DEFINE_UI_PARAMS(wb_target, WB / Target, DCTLUI_COMBO_BOX, 0, {WB_TARGET_OFF, WB_TARGET_3200, WB_TARGET_4300, WB_TARGET_5500, WB_TARGET_5600, WB_TARGET_6500}, {Off, 3200K Tungsten, 4300K Mixed, 5500K 50D-250D, 5600K Daylight, 6500K D65})
+DEFINE_UI_PARAMS(tint_preset, Tint / Preset, DCTLUI_COMBO_BOX, 0, {TINT_OFF, TINT_GREEN_LOW, TINT_GREEN_MED, TINT_GREEN_HIGH, TINT_MAGENTA_LOW, TINT_MAGENTA_MED, TINT_MAGENTA_HIGH}, {Off, Green Fix Low, Green Fix Med, Green Fix High, Magenta Fix Low, Magenta Fix Med, Magenta Fix High})
+
+// ---------------- LogC3 EI800 ----------------
+#define LOGC3_CUT 0.010591f
+#define LOGC3_A 5.555556f
+#define LOGC3_B 0.052272f
+#define LOGC3_C 0.247190f
+#define LOGC3_D 0.385537f
+#define LOGC3_E 5.367655f
+#define LOGC3_F 0.092809f
+#define LOGC3_CODE_CUT 0.149657834105f
+
+// ---------------- Helpers ----------------
+__DEVICE__ int clampi(int x,int a,int b){return x<a?a:(x>b?b:x);}
+
+__DEVICE__ float3 mmul(float3 c0,float3 c1,float3 c2,float3 v){
+  return make_float3(
+    c0.x*v.x+c1.x*v.y+c2.x*v.z,
+    c0.y*v.x+c1.y*v.y+c2.y*v.z,
+    c0.z*v.x+c1.z*v.y+c2.z*v.z);
+}
+
+__DEVICE__ float lc3_dec_1(float v){
+  if(v>LOGC3_CODE_CUT)
+    return (_powf(10.0f,(v-LOGC3_D)/LOGC3_C)-LOGC3_B)/LOGC3_A;
+  return (v-LOGC3_F)/LOGC3_E;
+}
+
+__DEVICE__ float lc3_enc_1(float x){
+  if(x>LOGC3_CUT){
+    float a=_fmaxf(LOGC3_A*x+LOGC3_B,1.0e-30f);
+    return LOGC3_C*_log10f(a)+LOGC3_D;
+  }
+  return LOGC3_E*x+LOGC3_F;
+}
+
+__DEVICE__ float3 lc3_decode(float3 v){
+  return make_float3(lc3_dec_1(v.x),lc3_dec_1(v.y),lc3_dec_1(v.z));
+}
+
+__DEVICE__ float3 lc3_encode(float3 v){
+  return make_float3(lc3_enc_1(v.x),lc3_enc_1(v.y),lc3_enc_1(v.z));
+}
+
+// ---------------- WB / Tint matrices ----------------
+__DEVICE__ float3 apply_wb_preset(float3 rgb,int source_id,int target_id){
+  if(target_id<=0)return rgb;
+  if(target_id==1){
+    if(source_id==0)return mmul(make_float3(1.11987622f,-0.0365320162f,-0.00996263765f),make_float3(0.242808261f,0.898552435f,0.00573794711f),make_float3(-0.0682823048f,-0.0415933918f,0.479229957f),rgb);
+    if(source_id==1)return mmul(make_float3(1.08638728f,-0.0264655f,-0.00784191337f),make_float3(0.175518944f,0.926605554f,0.00513370568f),make_float3(-0.0523438439f,-0.0347767345f,0.578531858f),rgb);
+    if(source_id==2)return mmul(make_float3(1.05878953f,-0.0181051872f,-0.00578652394f),make_float3(0.119814926f,0.949857284f,0.00417182502f),make_float3(-0.0377519466f,-0.026928119f,0.681817717f),rgb);
+    if(source_id==3)return mmul(make_float3(1.03581765f,-0.011087528f,-0.00379633031f),make_float3(0.0732192217f,0.969332867f,0.0029500672f),make_float3(-0.0242831835f,-0.0183699275f,0.787263274f),rgb);
+    if(source_id==4)return mmul(make_float3(1.01647493f,-0.00512561418f,-0.00186860938f),make_float3(0.033778627f,0.985840995f,0.00154149731f),make_float3(-0.0117491886f,-0.00933714626f,0.893613783f),rgb);
+    if(source_id==5)return rgb;
+    if(source_id==6)return mmul(make_float3(0.985814681f,0.00445611392f,0.00181282227f),make_float3(-0.0292511287f,1.01227976f,-0.00163467057f),make_float3(0.0110819157f,0.00951785026f,1.10581571f),rgb);
+    if(source_id==7)return mmul(make_float3(0.973478088f,0.00837003671f,0.00357293593f),make_float3(-0.0548402985f,1.0230388f,-0.00333301927f),make_float3(0.0215887559f,0.0191260436f,1.21063651f),rgb);
+    if(source_id==8)return mmul(make_float3(0.962651121f,0.0118397739f,0.00528313256f),make_float3(-0.0774335702f,1.03255309f,-0.00507299942f),make_float3(0.0315934385f,0.0287581504f,1.31416547f),rgb);
+    if(source_id==9)return mmul(make_float3(0.942609664f,0.0176911226f,0.00572896923f),make_float3(-0.117028937f,1.04898411f,-0.00419339092f),make_float3(0.0372330632f,0.0268684362f,1.31619798f),rgb);
+    if(source_id==10)return mmul(make_float3(0.92849085f,0.0222127629f,0.00794465935f),make_float3(-0.146479651f,1.06138485f,-0.00644057149f),make_float3(0.0502110292f,0.0393241423f,1.45019482f),rgb);
+    if(source_id==11)return mmul(make_float3(0.920343307f,0.0248518588f,0.00936508762f),make_float3(-0.163590859f,1.06860251f,-0.0079511586f),make_float3(0.0583718075f,0.0475401795f,1.53740699f),rgb);
+    if(source_id==12)return mmul(make_float3(0.90970037f,0.0283379385f,0.0114047496f),make_float3(-0.186093582f,1.07811071f,-0.0102020858f),make_float3(0.0699042558f,0.0596079982f,1.66417039f),rgb);
+    if(source_id==13)return mmul(make_float3(0.903499927f,0.0303918856f,0.0127025162f),make_float3(-0.199293006f,1.08369759f,-0.0116785077f),make_float3(0.0771413798f,0.0674323489f,1.74565364f),rgb);
+    if(source_id==14)return mmul(make_float3(0.897908864f,0.0322603283f,0.0139506074f),make_float3(-0.21125893f,1.08876919f,-0.0131272202f),make_float3(0.0840359796f,0.0750522785f,1.82455706f),rgb);
+    if(source_id==15)return mmul(make_float3(0.89050022f,0.0347627442f,0.0157308978f),make_float3(-0.227218333f,1.09554439f,-0.0152375432f),make_float3(0.0937707783f,0.0860662201f,1.93792689f),rgb);
+    if(source_id==16)return mmul(make_float3(0.888259277f,0.0355261631f,0.0163003147f),make_float3(-0.232070992f,1.09760716f,-0.0159224818f),make_float3(0.0968617512f,0.0896218601f,1.97437417f),rgb);
+    if(source_id==17)return mmul(make_float3(0.880261453f,0.0382779923f,0.0184621289f),make_float3(-0.24949599f,1.10502532f,-0.0185623687f),make_float3(0.108506964f,0.103251333f,2.11348687f),rgb);
+    if(source_id==18)return mmul(make_float3(0.872046604f,0.0411538914f,0.0209177469f),make_float3(-0.267586295f,1.11274684f,-0.0216283866f),make_float3(0.121581674f,0.118955465f,2.27276666f),rgb);
+    if(source_id==19)return mmul(make_float3(0.865346896f,0.0435418789f,0.0231228472f),make_float3(-0.282505706f,1.11913206f,-0.0244340407f),make_float3(0.133203325f,0.133230535f,2.41677838f),rgb);
+    if(source_id==20)return mmul(make_float3(0.859780137f,0.0455589842f,0.025111837f),make_float3(-0.295030517f,1.12450556f,-0.0270016077f),make_float3(0.143602133f,0.146228317f,2.54736661f),rgb);
+    if(source_id==21)return mmul(make_float3(0.85511339f,0.0472755715f,0.026901115f),make_float3(-0.305630112f,1.1290632f,-0.0293377773f),make_float3(0.152896774f,0.158008189f,2.66533712f),rgb);
+    if(source_id==22)return mmul(make_float3(0.851150968f,0.0487531348f,0.0285157925f),make_float3(-0.3147081f,1.1329744f,-0.0314652535f),make_float3(0.161240597f,0.168702176f,2.77215659f),rgb);
+    if(source_id==23)return mmul(make_float3(0.847749474f,0.0500373922f,0.0299773966f),make_float3(-0.322562788f,1.1363647f,-0.0334053863f),make_float3(0.168760788f,0.178429705f,2.8691179f),rgb);
+    if(source_id==24)return mmul(make_float3(0.842224559f,0.0521573048f,0.0325129963f),make_float3(-0.335453114f,1.14194157f,-0.0368002596f),make_float3(0.181740678f,0.195401206f,3.0378722f),rgb);
+  }
+  if(target_id==2){
+    if(source_id==0)return mmul(make_float3(1.19756178f,-0.058974583f,-0.0136924277f),make_float3(0.393436626f,0.838146413f,0.00552365016f),make_float3(-0.0992174772f,-0.0493668885f,0.330783318f),rgb);
+    if(source_id==1)return mmul(make_float3(1.16300232f,-0.0488298614f,-0.0119956728f),make_float3(0.325354635f,0.865998948f,0.00560366213f),make_float3(-0.0851841953f,-0.045772886f,0.399197269f),rgb);
+    if(source_id==2)return mmul(make_float3(1.13451926f,-0.0404166454f,-0.0103849489f),make_float3(0.269017663f,0.889094287f,0.00535158875f),make_float3(-0.072608324f,-0.0412783351f,0.470370394f),rgb);
+    if(source_id==3)return mmul(make_float3(1.11080764f,-0.0333654303f,-0.00885136989f),make_float3(0.2219135f,0.908447775f,0.00485311531f),make_float3(-0.0612224887f,-0.0361458639f,0.543042117f),rgb);
+    if(source_id==4)return mmul(make_float3(1.0908395f,-0.0273847131f,-0.00738613213f),make_float3(0.182061376f,0.924860387f,0.00417303306f),make_float3(-0.0508074977f,-0.0305693227f,0.616345151f),rgb);
+    if(source_id==5)return mmul(make_float3(1.07382958f,-0.0222515889f,-0.00598162579f),make_float3(0.147947168f,0.938944597f,0.00335951383f),make_float3(-0.0411916958f,-0.0246904177f,0.68967853f),rgb);
+    if(source_id==6)return mmul(make_float3(1.05918156f,-0.0177966584f,-0.00463153959f),make_float3(0.118420531f,0.951165853f,0.00244834004f),make_float3(-0.0322421969f,-0.0186129078f,0.76262304f),rgb);
+    if(source_id==7)return mmul(make_float3(1.04644071f,-0.0138906509f,-0.00333068514f),make_float3(0.0926038529f,0.961879335f,0.00146623496f),make_float3(-0.0238558819f,-0.0124132096f,0.834885125f),rgb);
+    if(source_id==8)return mmul(make_float3(1.03525729f,-0.010434068f,-0.00207477974f),make_float3(0.069821814f,0.971358423f,0.00043331633f),make_float3(-0.0159520488f,-0.0061479885f,0.906259343f),rgb);
+    if(source_id==9)return mmul(make_float3(1.01458351f,-0.00450502942f,-0.00162775767f),make_float3(0.029697828f,0.98764558f,0.00133200815f),make_float3(-0.0102593529f,-0.00809799956f,0.907621036f),rgb);
+    if(source_id==10)return rgb;
+    if(source_id==11)return mmul(make_float3(0.991582865f,0.00262418907f,0.00103724084f),make_float3(-0.0172444657f,1.00719503f,-0.000915219281f),make_float3(0.00638640764f,0.00537950894f,1.06012715f),rgb);
+    if(source_id==12)return mmul(make_float3(0.980585901f,0.00608388773f,0.00251932515f),make_float3(-0.0399091254f,1.01667899f,-0.00230108957f),make_float3(0.0153340916f,0.0133240651f,1.1475247f),rgb);
+    if(source_id==13)return mmul(make_float3(0.974178101f,0.00811835689f,0.00345835659f),make_float3(-0.0531956774f,1.02225493f,-0.00322162289f),make_float3(0.0209066871f,0.0184978039f,1.20370494f),rgb);
+    if(source_id==14)return mmul(make_float3(0.968399273f,0.00996631563f,0.00435885849f),make_float3(-0.0652350364f,1.02731891f,-0.00413215478f),make_float3(0.0261874933f,0.0235509214f,1.2581073f),rgb);
+    if(source_id==15)return mmul(make_float3(0.960740544f,0.0124368436f,0.00563940963f),make_float3(-0.0812834152f,1.03408768f,-0.00546937449f),make_float3(0.033600594f,0.0308766392f,1.33627481f),rgb);
+    if(source_id==16)return mmul(make_float3(0.958423642f,0.0131894567f,0.00604809281f),make_float3(-0.0861609506f,1.03614939f,-0.00590580594f),make_float3(0.0359444941f,0.0332465108f,1.36140517f),rgb);
+    if(source_id==17)return mmul(make_float3(0.950153418f,0.0158978603f,0.00759613457f),make_float3(-0.103666192f,1.04356755f,-0.00759732777f),make_float3(0.0447356214f,0.042349956f,1.45732434f),rgb);
+    if(source_id==18)return mmul(make_float3(0.941656401f,0.0187203331f,0.00934852182f),make_float3(-0.121823425f,1.05129586f,-0.00957774475f),make_float3(0.0545380094f,0.0528716472f,1.56715075f),rgb);
+    if(source_id==19)return mmul(make_float3(0.934724522f,0.0210571555f,0.0109174297f),make_float3(-0.136784084f,1.05769249f,-0.0114020498f),make_float3(0.0631975515f,0.0624608375f,1.66645098f),rgb);
+    if(source_id==20)return mmul(make_float3(0.928963266f,0.023025866f,0.0123292671f),make_float3(-0.149332839f,1.06308f,-0.0130798745f),make_float3(0.0709079325f,0.0712093666f,1.75649634f),rgb);
+    if(source_id==21)return mmul(make_float3(0.924132236f,0.024697311f,0.0135969768f),make_float3(-0.159944479f,1.06765291f,-0.0146123669f),make_float3(0.0777721866f,0.0791504527f,1.83784204f),rgb);
+    if(source_id==22)return mmul(make_float3(0.920029359f,0.0261329639f,0.0147392506f),make_float3(-0.169026404f,1.07157984f,-0.0160122011f),make_float3(0.0839141003f,0.0863684331f,1.91149916f),rgb);
+    if(source_id==23)return mmul(make_float3(0.916506532f,0.0273784115f,0.0157719475f),make_float3(-0.176879499f,1.07498582f,-0.0172918952f),make_float3(0.0894346632f,0.0929406924f,1.97835899f),rgb);
+    if(source_id==24)return mmul(make_float3(0.910782904f,0.029429225f,0.0175608667f),make_float3(-0.189756589f,1.08059284f,-0.0195374255f),make_float3(0.0989324632f,0.104420555f,2.09472459f),rgb);
+  }
+  if(target_id==3){
+    if(source_id==0)return mmul(make_float3(1.24100244f,-0.0714848539f,-0.0157766393f),make_float3(0.477399016f,0.804614525f,0.00541216522f),make_float3(-0.116485301f,-0.0537380088f,0.247813032f),rgb);
+    if(source_id==1)return mmul(make_float3(1.20584177f,-0.0612952597f,-0.0143167817f),make_float3(0.408866109f,0.832359352f,0.00587482749f),make_float3(-0.103515838f,-0.0519457433f,0.29896315f),rgb);
+    if(source_id==2)return mmul(make_float3(1.17686154f,-0.0528515109f,-0.0129545338f),make_float3(0.352168826f,0.855370942f,0.00601965158f),make_float3(-0.0920659129f,-0.0493262856f,0.352187891f),rgb);
+    if(source_id==3)return mmul(make_float3(1.15273447f,-0.0457807306f,-0.0116761186f),make_float3(0.304774991f,0.874659271f,0.00592558014f),make_float3(-0.0818435536f,-0.0461088862f,0.406541734f),rgb);
+    if(source_id==4)return mmul(make_float3(1.13241511f,-0.0397888167f,-0.0104693317f),make_float3(0.264688193f,0.891021121f,0.00565278649f),make_float3(-0.0726123094f,-0.042464418f,0.46137395f),rgb);
+    if(source_id==5)return mmul(make_float3(1.11510474f,-0.0346509038f,-0.00932418735f),make_float3(0.230382418f,0.905065788f,0.00524625413f),make_float3(-0.0641883775f,-0.0385186609f,0.516233514f),rgb);
+    if(source_id==6)return mmul(make_float3(1.10019687f,-0.0301961209f,-0.00823270317f),make_float3(0.200698313f,0.917256319f,0.00473954777f),make_float3(-0.0564302745f,-0.0343642585f,0.570805733f),rgb);
+    if(source_id==7)return mmul(make_float3(1.087229f,-0.0262940862f,-0.00718851138f),make_float3(0.174751418f,0.927946072f,0.00415784616f),make_float3(-0.0492287651f,-0.0300698394f,0.62487018f),rgb);
+    if(source_id==8)return mmul(make_float3(1.07584539f,-0.0228444562f,-0.00618649467f),make_float3(0.151861165f,0.937407029f,0.00352018864f),make_float3(-0.0424987847f,-0.0256866175f,0.678272549f),rgb);
+    if(source_id==9)return mmul(make_float3(1.05481649f,-0.0168713191f,-0.00573877127f),make_float3(0.111437141f,0.953616314f,0.00442966781f),make_float3(-0.0367758318f,-0.0276706408f,0.679259297f),rgb);
+    if(source_id==10)return mmul(make_float3(1.03997202f,-0.012375053f,-0.00443958947f),make_float3(0.0815976658f,0.965946856f,0.00360925973f),make_float3(-0.0280355053f,-0.0220084843f,0.748377297f),rgb);
+    if(source_id==11)return mmul(make_float3(1.03140348f,-0.00975889105f,-0.00361650194f),make_float3(0.0642766602f,0.973130413f,0.00302685736f),make_float3(-0.0226405595f,-0.0182145043f,0.793366152f),rgb);
+    if(source_id==12)return mmul(make_float3(1.0202077f,-0.00631353665f,-0.00244603479f),make_float3(0.0415187714f,0.982602397f,0.00212455527f),make_float3(-0.0151371955f,-0.0125747009f,0.858761445f),rgb);
+    if(source_id==13)return mmul(make_float3(1.01368345f,-0.00428971737f,-0.00170749426f),make_float3(0.0281819194f,0.988173135f,0.00151476096f),make_float3(-0.0104947287f,-0.0088825477f,0.9007994f),rgb);
+    if(source_id==14)return mmul(make_float3(1.00779918f,-0.00245299281f,-0.00100125361f),make_float3(0.0161000593f,0.9932337f,0.000905066535f),make_float3(-0.00611571314f,-0.00526416797f,0.941507679f),rgb);
+    if(source_id==15)return rgb;
+    if(source_id==16)return mmul(make_float3(0.997640442f,0.000746661523f,0.000318852129f),make_float3(-0.00489203431f,1.00206147f,-0.000297519727f),make_float3(0.00192642439f,0.00170708308f,1.01880514f),rgb);
+    if(source_id==17)return mmul(make_float3(0.989217239f,0.00343110995f,0.00152386305f),make_float3(-0.0224442681f,1.00948087f,-0.00145892623f),make_float3(0.00912262825f,0.00828070092f,1.0905827f),rgb);
+    if(source_id==18)return mmul(make_float3(0.980561757f,0.00622405238f,0.00288321981f),make_float3(-0.0406411478f,1.0172143f,-0.00283252109f),make_float3(0.0170963442f,0.0159056778f,1.17276874f),rgb);
+    if(source_id==19)return mmul(make_float3(0.97349949f,0.00853255178f,0.00409656396f),make_float3(-0.0556267201f,1.02361838f,-0.00410828336f),make_float3(0.0241005488f,0.0228757162f,1.24707894f),rgb);
+    if(source_id==20)return mmul(make_float3(0.967629006f,0.0104744448f,0.00518583462f),make_float3(-0.0681904272f,1.02901466f,-0.00528877304f),make_float3(0.030308522f,0.0292491518f,1.3144642f),rgb);
+    if(source_id==21)return mmul(make_float3(0.962705715f,0.0121208554f,0.00616203995f),make_float3(-0.0788101328f,1.03359688f,-0.00637203957f),make_float3(0.0358145603f,0.0350445777f,1.37533966f),rgb);
+    if(source_id==22)return mmul(make_float3(0.958523959f,0.0135332541f,0.00704028852f),make_float3(-0.0878954071f,1.03753329f,-0.00736514983f),make_float3(0.0407259346f,0.0403196756f,1.43046175f),rgb);
+    if(source_id==23)return mmul(make_float3(0.954932992f,0.0147571571f,0.00783327043f),make_float3(-0.0957486083f,1.04094864f,-0.00827568637f),make_float3(0.0451289978f,0.0451283274f,1.48049735f),rgb);
+    if(source_id==24)return mmul(make_float3(0.949097767f,0.0167695926f,0.0092048696f),make_float3(-0.108619949f,1.0465735f,-0.009878784f),make_float3(0.0526808057f,0.0535386987f,1.56758198f),rgb);
+  }
+  if(target_id==4){
+    if(source_id==0)return mmul(make_float3(1.24361405f,-0.0722373619f,-0.0158957389f),make_float3(0.4824533f,0.802590569f,0.00539565437f),make_float3(-0.117495106f,-0.0539543195f,0.243259907f),rgb);
+    if(source_id==1)return mmul(make_float3(1.20841741f,-0.0620449692f,-0.0144488355f),make_float3(0.413893385f,0.83032858f,0.00587933406f),make_float3(-0.104583604f,-0.0522608852f,0.293462348f),rgb);
+    if(source_id==2)return mmul(make_float3(1.17940744f,-0.0535992726f,-0.0131001867f),make_float3(0.357174496f,0.85333481f,0.00604595461f),make_float3(-0.0931951313f,-0.0497442958f,0.345701836f),rgb);
+    if(source_id==3)return mmul(make_float3(1.15525556f,-0.046527196f,-0.0118357446f),make_float3(0.309763268f,0.872618908f,0.00597408923f),make_float3(-0.0830363479f,-0.0466319674f,0.399050145f),rgb);
+    if(source_id==4)return mmul(make_float3(1.13491521f,-0.0405344849f,-0.0106431165f),make_float3(0.269662359f,0.888977404f,0.00572365808f),make_float3(-0.0738698411f,-0.0430935105f,0.45286843f),rgb);
+    if(source_id==5)return mmul(make_float3(1.11758692f,-0.0353961568f,-0.00951218543f),make_float3(0.235345044f,0.903019405f,0.00533947026f),make_float3(-0.0655111319f,-0.0392538288f,0.506713899f),rgb);
+    if(source_id==6)return mmul(make_float3(1.10266355f,-0.0309412538f,-0.00843487653f),make_float3(0.205651435f,0.915207807f,0.00485496939f),make_float3(-0.0578182563f,-0.0352049542f,0.560277597f),rgb);
+    if(source_id==7)return mmul(make_float3(1.08968215f,-0.0270393286f,-0.00740475596f),make_float3(0.179696662f,0.925895861f,0.0042952488f),make_float3(-0.0506816373f,-0.0310150882f,0.613343112f),rgb);
+    if(source_id==8)return mmul(make_float3(1.07828663f,-0.0235899876f,-0.00641666121f),make_float3(0.156799846f,0.935355465f,0.00367928977f),make_float3(-0.0440159664f,-0.0267351446f,0.665758941f),rgb);
+    if(source_id==9)return mmul(make_float3(1.05723643f,-0.0176142164f,-0.00596886863f),make_float3(0.116357917f,0.951559988f,0.00458937069f),make_float3(-0.0382910816f,-0.0287209978f,0.666725105f),rgb);
+    if(source_id==10)return mmul(make_float3(1.04237643f,-0.0131183099f,-0.00468770373f),make_float3(0.0865098529f,0.963888753f,0.00379704747f),make_float3(-0.029633973f,-0.023192513f,0.734566228f),rgb);
+    if(source_id==11)return mmul(make_float3(1.03379888f,-0.010502521f,-0.00387636018f),make_float3(0.0691841906f,0.971071403f,0.0032329152f),make_float3(-0.0242933579f,-0.0194855432f,0.778724087f),rgb);
+    if(source_id==12)return mmul(make_float3(1.02259129f,-0.00705786837f,-0.00272298416f),make_float3(0.0464206094f,0.980542357f,0.00235715801f),make_float3(-0.0168691574f,-0.0139722223f,0.842911599f),rgb);
+    if(source_id==13)return mmul(make_float3(1.01606012f,-0.00503458516f,-0.00199544059f),make_float3(0.0330806729f,0.986112582f,0.0017644206f),make_float3(-0.0122776801f,-0.0103613778f,0.884173233f),rgb);
+    if(source_id==14)return mmul(make_float3(1.01016959f,-0.00319843522f,-0.00129985609f),make_float3(0.020996196f,0.991172752f,0.00117123991f),make_float3(-0.00794810553f,-0.00682173712f,0.924129796f),rgb);
+    if(source_id==15)return mmul(make_float3(1.00236209f,-0.000746350743f,-0.000313924201f),make_float3(0.00489293668f,0.997938632f,0.000289894905f),make_float3(-0.00190353112f,-0.00167070849f,0.981542077f),rgb);
+    if(source_id==16)return rgb;
+    if(source_id==17)return mmul(make_float3(0.991567742f,0.00268318825f,0.00118619138f),make_float3(-0.0175551803f,1.00741915f,-0.00113230835f),make_float3(0.00710873546f,0.00643477701f,1.07045234f),rgb);
+    if(source_id==18)return mmul(make_float3(0.982902894f,0.00547456229f,0.00252398412f),make_float3(-0.0357545888f,1.01515251f,-0.00247259517f),make_float3(0.0149821507f,0.0139007757f,1.15112111f),rgb);
+    if(source_id==19)return mmul(make_float3(0.975832931f,0.00778154648f,0.00371781861f),make_float3(-0.0507417952f,1.02155671f,-0.00371824931f),make_float3(0.0218955518f,0.0207270681f,1.22405952f),rgb);
+    if(source_id==20)return mmul(make_float3(0.969956008f,0.00972199865f,0.00478938939f),make_float3(-0.063306528f,1.02695321f,-0.00487144049f),make_float3(0.028021104f,0.0269701513f,1.29020088f),rgb);
+    if(source_id==21)return mmul(make_float3(0.965027285f,0.011367059f,0.00574959865f),make_float3(-0.0739268358f,1.03153573f,-0.00593005032f),make_float3(0.0334526264f,0.0326478162f,1.34995266f),rgb);
+    if(source_id==22)return mmul(make_float3(0.960840892f,0.0127781998f,0.00661335865f),make_float3(-0.0830124192f,1.03547246f,-0.00690083639f),make_float3(0.0382964858f,0.0378162816f,1.40405731f),rgb);
+    if(source_id==23)return mmul(make_float3(0.957245919f,0.0140009349f,0.00739318633f),make_float3(-0.0908657262f,1.03888815f,-0.0077911114f),make_float3(0.0426382335f,0.0425281402f,1.45316936f),rgb);
+    if(source_id==24)return mmul(make_float3(0.951404149f,0.0160112858f,0.00874188344f),make_float3(-0.103736896f,1.04451369f,-0.00935894796f),make_float3(0.0500832624f,0.0507700448f,1.53864666f),rgb);
+  }
+  if(target_id==5){
+    if(source_id==0)return mmul(make_float3(1.26267345f,-0.0777392407f,-0.01674448f),make_float3(0.51942062f,0.787737917f,0.00524045823f),make_float3(-0.124776635f,-0.0553719204f,0.21147899f),rgb);
+    if(source_id==1)return mmul(make_float3(1.22721541f,-0.0675263399f,-0.0153878448f),make_float3(0.450665657f,0.815424053f,0.00587086347f),make_float3(-0.112268406f,-0.0543680607f,0.2550655f),rgb);
+    if(source_id==2)return mmul(make_float3(1.19798947f,-0.0590662644f,-0.014133995f),make_float3(0.393790707f,0.838389237f,0.00618964446f),make_float3(-0.101307834f,-0.0525692878f,0.300426731f),rgb);
+    if(source_id==3)return mmul(make_float3(1.17365729f,-0.051984509f,-0.0129669879f),make_float3(0.346253817f,0.857640713f,0.00627279657f),make_float3(-0.0915919741f,-0.0501902001f,0.346755191f),rgb);
+    if(source_id==4)return mmul(make_float3(1.15316467f,-0.0459857119f,-0.011873112f),make_float3(0.306050928f,0.873973137f,0.00617847447f),make_float3(-0.0828766604f,-0.0473915819f,0.393495024f),rgb);
+    if(source_id==5)return mmul(make_float3(1.13570627f,-0.0408440585f,-0.0108413274f),make_float3(0.271650195f,0.887994185f,0.00595026856f),make_float3(-0.0749726525f,-0.044292216f,0.440260897f),rgb);
+    if(source_id==6)return mmul(make_float3(1.12067051f,-0.0363879631f,-0.00986290993f),make_float3(0.241887859f,0.900165675f,0.00562077604f),make_float3(-0.0677346101f,-0.0409798629f,0.486783907f),rgb);
+    if(source_id==7)return mmul(make_float3(1.10759102f,-0.0324865054f,-0.00893096672f),make_float3(0.215876106f,0.910840036f,0.0052144991f),make_float3(-0.0610505511f,-0.0375197304f,0.532875668f),rgb);
+    if(source_id==8)return mmul(make_float3(1.0961091f,-0.0290389298f,-0.00804000954f),make_float3(0.192931795f,0.920288538f,0.00475000777f),make_float3(-0.0548334481f,-0.0339606346f,0.578404273f),rgb);
+    if(source_id==9)return mmul(make_float3(1.07490399f,-0.023044139f,-0.00759163205f),make_float3(0.152360631f,0.936457462f,0.00566429994f),make_float3(-0.0490942142f,-0.0359590593f,0.57922672f),rgb);
+    if(source_id==10)return mmul(make_float3(1.05993135f,-0.0185504168f,-0.00643617866f),make_float3(0.122450412f,0.94877167f,0.00506802715f),make_float3(-0.0410175607f,-0.0313635547f,0.638153709f),rgb);
+    if(source_id==11)return mmul(make_float3(1.05128855f,-0.0159370507f,-0.00570678597f),make_float3(0.105091036f,0.955946704f,0.00463142964f),make_float3(-0.0360559531f,-0.0282639006f,0.67651023f),rgb);
+    if(source_id==12)return mmul(make_float3(1.03999538f,-0.012497072f,-0.00467267591f),make_float3(0.0822862134f,0.965408729f,0.00394097022f),make_float3(-0.0291840424f,-0.023633412f,0.732265976f),rgb);
+    if(source_id==13)return mmul(make_float3(1.03341415f,-0.010477409f,-0.00402187723f),make_float3(0.0689239135f,0.970974357f,0.00346730237f),make_float3(-0.0249483239f,-0.0205901014f,0.768107963f),rgb);
+    if(source_id==14)return mmul(make_float3(1.02747834f,-0.00864516145f,-0.00340065971f),make_float3(0.0568204544f,0.976030813f,0.00298939482f),make_float3(-0.0209637272f,-0.0176000588f,0.802816648f),rgb);
+    if(source_id==15)return mmul(make_float3(1.0196106f,-0.00619928459f,-0.00252165769f),make_float3(0.0406939625f,0.982792472f,0.00227363715f),make_float3(-0.0154155531f,-0.0132387526f,0.852688951f),rgb);
+    if(source_id==16)return mmul(make_float3(1.01723024f,-0.00545506507f,-0.00224212818f),make_float3(0.0357944681f,0.984852735f,0.00203696873f),make_float3(-0.0136717741f,-0.011821943f,0.868722906f),rgb);
+    if(source_id==17)return mmul(make_float3(1.00873252f,-0.00278054429f,-0.00118728467f),make_float3(0.0182178529f,0.992268652f,0.00110777998f),make_float3(-0.00717343242f,-0.00635629779f,0.929923639f),rgb);
+    if(source_id==18)return rgb;
+    if(source_id==19)return mmul(make_float3(0.992874477f,0.00229649356f,0.0010576624f),make_float3(-0.0149991745f,1.00640368f,-0.00103547936f),make_float3(0.00627966706f,0.00582290583f,1.06336167f),rgb);
+    if(source_id==20)return mmul(make_float3(0.986951099f,0.00422694382f,0.00200568998f),make_float3(-0.0275714697f,1.01180061f,-0.0019981194f),make_float3(0.0118299621f,0.0111560889f,1.12081917f),rgb);
+    if(source_id==21)return mmul(make_float3(0.98198321f,0.0058626209f,0.0028542473f),make_float3(-0.038196266f,1.01638416f,-0.00288461095f),make_float3(0.0167413865f,0.0160117415f,1.1727263f),rgb);
+    if(source_id==22)return mmul(make_float3(0.977763384f,0.00726501264f,0.00361687664f),make_float3(-0.0472842108f,1.0203223f,-0.00369956518f),make_float3(0.021114003f,0.0204358727f,1.21972791f),rgb);
+    if(source_id==23)return mmul(make_float3(0.974139577f,0.00847961866f,0.0043048817f),make_float3(-0.0551383974f,1.02373962f,-0.00444840165f),make_float3(0.0250277697f,0.0244720751f,1.26239253f),rgb);
+    if(source_id==24)return mmul(make_float3(0.96825067f,0.0104754412f,0.00549371847f),make_float3(-0.0680085419f,1.0293687f,-0.00577009907f),make_float3(0.0317274663f,0.0315380164f,1.33664872f),rgb);
+  }
+  return rgb;
+}
+
+__DEVICE__ float3 apply_tint_preset(float3 rgb,int tint_id){
+  if(tint_id<=0)return rgb;
+  // V2: correction direction fixed.
+  // Green Fix applies compensating magenta; Magenta Fix applies compensating green.
+  if(tint_id==1)return mmul(make_float3(1.00403773f,-0.00107492f,0.00016121464f),make_float3(0.00742283926f,0.997121286f,-0.000541873696f),make_float3(8.39434552e-05f,0.0021552227f,1.01701071f),rgb);
+  if(tint_id==2)return mmul(make_float3(1.00806728f,-0.00214502622f,0.000329458746f),make_float3(0.0148171869f,0.994258475f,-0.00109344549f),make_float3(0.000203219791f,0.00435844107f,1.03449807f),rgb);
+  if(tint_id==3)return mmul(make_float3(1.01342745f,-0.00356436854f,0.000565221093f),make_float3(0.0246324546f,0.990465693f,-0.00184475149f),make_float3(0.000419516402f,0.00737448075f,1.05859133f),rgb);
+  if(tint_id==4)return mmul(make_float3(0.995954009f,0.00107974935f,-0.000154458484f),make_float3(-0.00745160345f,1.00289487f,0.000532606905f),make_float3(-4.98609853e-05f,-0.00210927347f,0.983446673f),rgb);
+  if(tint_id==5)return mmul(make_float3(0.991899671f,0.00216434573f,-0.000302419877f),make_float3(-0.0149322508f,1.00580616f,0.00105635753f),make_float3(-6.68204696e-05f,-0.00417453828f,0.967332494f),rgb);
+  if(tint_id==6)return mmul(make_float3(0.986480756f,0.00361804883f,-0.000490016132f),make_float3(-0.0249521219f,1.00971385f,0.00174158308f),make_float3(-4.01734191e-05f,-0.00686293281f,0.946500306f),rgb);
+  return rgb;
+}
+
+// ---------------- Main ----------------
+__DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,float p_G,float p_B){
+  // Resolve-safe combo reads: round to nearest option index.
+  int src=clampi((int)(wb_source+0.5f),0,24);
+  int tgt=clampi((int)(wb_target+0.5f),0,5);
+  int tint=clampi((int)(tint_preset+0.5f),0,6);
+
+  // Exact neutral bypass: source selection alone does not alter the image.
+  if(tgt==0 && tint==0)
+    return make_float3(p_R,p_G,p_B);
+
+  float3 lin=lc3_decode(make_float3(p_R,p_G,p_B));
+
+  if(tgt!=0)
+    lin=apply_wb_preset(lin,src,tgt);
+
+  if(tint!=0)
+    lin=apply_tint_preset(lin,tint);
+
+  return lc3_encode(lin);
+}
