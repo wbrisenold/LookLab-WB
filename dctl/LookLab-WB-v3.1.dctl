@@ -1,4 +1,4 @@
-// LookLab-WB-v3.0.dctl
+// LookLab-WB-v3.1.dctl
 // LookLab WB-only rebuild.
 //
 // INPUT : ARRI Wide Gamut 3 / LogC3 EI800
@@ -7,13 +7,18 @@
 // INTENDED NODE ORDER:
 // CST -> LookLab WB -> PD LogC3 FilmMatrix -> LensNode -> Keystone -> ODT
 //
-// v3.0 removes all Start presets, creative looks, FilmMatrix precompensation,
+// v3.0 removed Start presets, creative looks, FilmMatrix precompensation,
 // Matrix Fix, Technical Safety, strength controls, and shared creative finishing.
-// It retains only the established WB Source -> Target matrices and Tint fixes
+// It retained only the established WB Source -> Target matrices and Tint fixes
 // from LookLab-Presets-v2.1.
 //
+// v3.1 extends Creative White across the CIE daylight locus from 4000 K to
+// 25000 K. Existing D50/D55/D60/D65/D75/D93 behavior is preserved exactly.
+// All non-neutral points are CAT02 adaptations from D65 to the selected daylight
+// chromaticity, with the same highlight-weighted blend used by the legacy control.
+//
 // Neutral state is an exact bypass:
-// WB Target Off + Tint Off returns the input code values unchanged.
+// WB Target Off + Tint Off + White Point D65 returns the input code values unchanged.
 //
 // SPDX-License-Identifier: MIT
 
@@ -21,6 +26,12 @@
 DEFINE_UI_PARAMS(wb_source, WB / Source, DCTLUI_COMBO_BOX, 16, {WB_SRC_2200, WB_SRC_2400, WB_SRC_2600, WB_SRC_2800, WB_SRC_3000, WB_SRC_3200, WB_SRC_3400, WB_SRC_3600, WB_SRC_3800, WB_SRC_4000, WB_SRC_4300, WB_SRC_4500, WB_SRC_4800, WB_SRC_5000, WB_SRC_5200, WB_SRC_5500, WB_SRC_5600, WB_SRC_6000, WB_SRC_6500, WB_SRC_7000, WB_SRC_7500, WB_SRC_8000, WB_SRC_8500, WB_SRC_9000, WB_SRC_10000}, {2200K, 2400K, 2600K, 2800K, 3000K, 3200K, 3400K, 3600K, 3800K, 4000K, 4300K, 4500K, 4800K, 5000K, 5200K, 5500K, 5600K, 6000K, 6500K, 7000K, 7500K, 8000K, 8500K, 9000K, 10000K})
 DEFINE_UI_PARAMS(wb_target, WB / Target, DCTLUI_COMBO_BOX, 0, {WB_TARGET_OFF, WB_TARGET_3200, WB_TARGET_4300, WB_TARGET_5500, WB_TARGET_5600, WB_TARGET_6500}, {Off, 3200K Tungsten, 4300K Mixed, 5500K 50D-250D, 5600K Daylight, 6500K D65})
 DEFINE_UI_PARAMS(tint_preset, Tint / Preset, DCTLUI_COMBO_BOX, 0, {TINT_OFF, TINT_GREEN_LOW, TINT_GREEN_MED, TINT_GREEN_HIGH, TINT_MAGENTA_LOW, TINT_MAGENTA_MED, TINT_MAGENTA_HIGH}, {Off, Green Fix Low, Green Fix Med, Green Fix High, Magenta Fix Low, Magenta Fix Med, Magenta Fix High})
+
+// ---------------- CREATIVE WHITE ----------------
+// D65 is neutral. D93/D75/D60/D55/D50 preserve the former Keystone values
+// exactly. Extended points use the same CAT02 construction on the CIE
+// daylight locus. 4000 K and 25000 K are the practical endpoints of this control.
+DEFINE_UI_PARAMS(creative_whitepoint, White / Point, DCTLUI_COMBO_BOX, 7, {wp_d250,wp_d200,wp_d150,wp_d120,wp_d100,wp_d93,wp_d75,wp_d65,wp_d60,wp_d55,wp_d50,wp_d45,wp_d40}, {25000K Daylight,20000K Daylight,15000K Daylight,12000K Daylight,10000K Daylight,D93,D75,D65,D60,D55,D50,4500K Daylight,4000K Daylight})
 
 // ---------------- LogC3 EI800 ----------------
 #define LOGC3_CUT 0.010591f
@@ -32,8 +43,22 @@ DEFINE_UI_PARAMS(tint_preset, Tint / Preset, DCTLUI_COMBO_BOX, 0, {TINT_OFF, TIN
 #define LOGC3_F 0.092809f
 #define LOGC3_CODE_CUT 0.149657834105f
 
+// Catastrophic-negative safety floor. This does not clamp normal LogC3 values.
+// It activates only when a transformed linear channel would encode below -1.0
+// in the EI800 LogC3 toe: (-1.0 - LOGC3_F) / LOGC3_E.
+#define LL_SAFE_LINEAR_MIN -0.203591513f
+
 // ---------------- Helpers ----------------
 __DEVICE__ int clampi(int x,int a,int b){return x<a?a:(x>b?b:x);}
+__DEVICE__ float clampf(float x,float a,float b){return _fmaxf(a,_fminf(b,x));}
+
+// ARRI Wide Gamut 3 <-> XYZ D65, matching Keystone's AWG3 path.
+#define LL_AWG3_XYZ_C0 make_float3(0.638008f,0.291954f,0.002798f)
+#define LL_AWG3_XYZ_C1 make_float3(0.214704f,0.823841f,-0.067034f)
+#define LL_AWG3_XYZ_C2 make_float3(0.097744f,-0.115795f,1.153294f)
+#define LL_XYZ_AWG3_C0 make_float3(1.789064538025f,-0.639848741771f,-0.041530974004f)
+#define LL_XYZ_AWG3_C1 make_float3(-0.482533816466f,1.396400099532f,0.082334958727f)
+#define LL_XYZ_AWG3_C2 make_float3(-0.200075026387f,0.194432230586f,0.878868163772f)
 
 __DEVICE__ float3 mmul(float3 c0,float3 c1,float3 c2,float3 v){
   return make_float3(
@@ -205,6 +230,141 @@ __DEVICE__ float3 apply_wb_preset(float3 rgb,int source_id,int target_id){
   return rgb;
 }
 
+// ---------------- Creative White ----------------
+__DEVICE__ float3 ll_rowmul(
+    float3 v,
+    float r00,float r01,float r02,
+    float r10,float r11,float r12,
+    float r20,float r21,float r22)
+{
+  return make_float3(
+    r00*v.x+r01*v.y+r02*v.z,
+    r10*v.x+r11*v.y+r12*v.z,
+    r20*v.x+r21*v.y+r22*v.z);
+}
+
+__DEVICE__ float3 ll_awg3_to_xyz(float3 rgb){
+  return mmul(LL_AWG3_XYZ_C0,LL_AWG3_XYZ_C1,LL_AWG3_XYZ_C2,rgb);
+}
+
+__DEVICE__ float3 ll_xyz_to_awg3(float3 xyz){
+  return mmul(LL_XYZ_AWG3_C0,LL_XYZ_AWG3_C1,LL_XYZ_AWG3_C2,xyz);
+}
+
+// Preserve ordinary negative/extended AWG3 values, but prevent extreme WB/tint/
+// white-point combinations from creating linear negatives that explode through
+// LogC3's linear toe. For usable scene luminance, scale chroma toward the neutral
+// axis so XYZ Y is preserved. This is a technical encode-domain guard, not a look.
+__DEVICE__ float3 ll_encode_domain_guard(float3 rgb){
+  float mn=_fminf(rgb.x,_fminf(rgb.y,rgb.z));
+  if(mn>=LL_SAFE_LINEAR_MIN)return rgb;
+
+  float Y=ll_awg3_to_xyz(rgb).y;
+  if(Y>LL_SAFE_LINEAR_MIN+1.0e-7f){
+    float3 n=make_float3(Y,Y,Y);
+    float3 d=rgb-n;
+    float s=1.0f;
+    if(rgb.x<LL_SAFE_LINEAR_MIN&&d.x<0.0f)s=_fminf(s,(LL_SAFE_LINEAR_MIN-Y)/d.x);
+    if(rgb.y<LL_SAFE_LINEAR_MIN&&d.y<0.0f)s=_fminf(s,(LL_SAFE_LINEAR_MIN-Y)/d.y);
+    if(rgb.z<LL_SAFE_LINEAR_MIN&&d.z<0.0f)s=_fminf(s,(LL_SAFE_LINEAR_MIN-Y)/d.z);
+    s=clampf(s,0.0f,1.0f);
+    return n+d*make_float3(s,s,s);
+  }
+
+  // Negative-luminance data is already outside the intended scene-exposure domain.
+  // Bound only the catastrophic channel excursion so encoding remains finite/useful.
+  return make_float3(
+    _fmaxf(rgb.x,LL_SAFE_LINEAR_MIN),
+    _fmaxf(rgb.y,LL_SAFE_LINEAR_MIN),
+    _fmaxf(rgb.z,LL_SAFE_LINEAR_MIN));
+}
+
+__DEVICE__ float3 ll_creative_white_cat(float3 xyz,int wp){
+  // Added v3.1 D-locus endpoints, calculated with the same CAT02 method as the
+  // preserved legacy matrices below. Source white is D65 [0.3127, 0.3290].
+  if(wp==0) // D250 / 25000 K
+    return ll_rowmul(xyz,
+      0.898582480872681f,-0.048697195877680f,0.160894696617813f,
+      -0.035648427642863f,0.964334867273072f,0.063860150686806f,
+      0.003161436907922f,0.011336133201932f,1.771921303595570f);
+  if(wp==1) // D200 / 20000 K
+    return ll_rowmul(xyz,
+      0.906655337605304f,-0.045921106577965f,0.146536485241791f,
+      -0.033571972014524f,0.968554828392304f,0.058173087099843f,
+      0.002892700695036f,0.010292858834950f,1.701438146651570f);
+  if(wp==2) // D150 / 15000 K
+    return ll_rowmul(xyz,
+      0.920745710751658f,-0.040686164611066f,0.122024792584633f,
+      -0.029678218770183f,0.975431381525171f,0.048460660026946f,
+      0.002429697520349f,0.008521820396839f,1.581616855573830f);
+  if(wp==3) // D120 / 12000 K
+    return ll_rowmul(xyz,
+      0.935402497128297f,-0.034674156080011f,0.097326531606005f,
+      -0.025235929407872f,0.981873121740019f,0.038668763810704f,
+      0.001956881378460f,0.006752162437915f,1.461633652323170f);
+  if(wp==4) // D100 / 10000 K
+    return ll_rowmul(xyz,
+      0.950423182356483f,-0.027862295109532f,0.072932181957946f,
+      -0.020233249939936f,0.987658172901151f,0.028990785296509f,
+      0.001482429019974f,0.005021894322072f,1.344015928711860f);
+
+  // Preserved legacy matrices: coefficient values from v3.0 are unchanged.
+  // They are independently reproducible as CAT02 D65 -> target-white matrices.
+  if(wp==5) // D93
+    return ll_rowmul(xyz,
+      0.95703423023223877f,-0.0247171502560377121f,0.0624028593301773071f,
+      -0.0179296955466270447f,0.990019857883453369f,0.0248119533061981201f,
+      0.00127589143812656403f,0.00427919067442417058f,1.29345715045928955f);
+  if(wp==6) // D75
+    return ll_rowmul(xyz,
+      0.981001079082489014f,-0.0116619253531098366f,0.0265614092350006104f,
+      -0.00843488052487373352f,0.996506094932556152f,0.0105696544051170349f,
+      0.000552809564396739006f,0.00179840810596942902f,1.12374722957611084f);
+  if(wp==7)return xyz; // D65 neutral
+  if(wp==8) // D60
+    return ll_rowmul(xyz,
+      1.01182246208190918f,0.00778879318386316299f,-0.0157783031463623047f,
+      0.00561682833358645439f,1.00150644779205322f,-0.00628517568111419678f,
+      -0.000335735734552145004f,-0.0010509500280022619f,0.927366673946380615f);
+  if(wp==9) // D55
+    return ll_rowmul(xyz,
+      1.02585089206695557f,0.0179439820349216461f,-0.0332137793302536011f,
+      0.0129133854061365128f,1.00214779376983643f,-0.0132421031594276428f,
+      -0.000719940289855003032f,-0.00218106806278228803f,0.84868013858795166f);
+  if(wp==10) // D50
+    return ll_rowmul(xyz,
+      1.04257404804229736f,0.03089117631316185f,-0.052812620997428894f,
+      0.0221935361623764038f,1.00185668468475342f,-0.0210737623274326324f,
+      -0.00116488314233720303f,-0.00342052709311246915f,0.761789083480834961f);
+
+  if(wp==11) // D45 / 4500 K
+    return ll_rowmul(xyz,
+      1.062692661533780f,0.047653216990071f,-0.074718873746586f,
+      0.034178492032503f,1.000017448963210f,-0.029844697648507f,
+      -0.001681749289308f,-0.004759743410189f,0.666998421506370f);
+  if(wp==12) // D40 / 4000 K
+    return ll_rowmul(xyz,
+      1.087427310124970f,0.070305954702049f,-0.098768613987689f,
+      0.050327961257519f,0.995189596817532f,-0.039505807530545f,
+      -0.002285450676197f,-0.006144315987662f,0.567257658747653f);
+  return xyz;
+}
+
+__DEVICE__ float ll_scene_tsn(float Y){
+  if(Y<=0.0f)return 0.0f;
+  return clampf(Y/(Y+1.62f),0.0f,1.0f);
+}
+
+__DEVICE__ float3 ll_apply_creative_white(float3 awg3,int wp){
+  if(wp==7)return awg3;
+  float3 xyz=ll_awg3_to_xyz(awg3);
+  if(xyz.y<=1.0e-10f)return awg3;
+  float3 adapted=ll_creative_white_cat(xyz,wp);
+  float blend=_sqrtf(ll_scene_tsn(xyz.y));
+  float3 out_xyz=xyz+(adapted-xyz)*make_float3(blend,blend,blend);
+  return ll_xyz_to_awg3(out_xyz);
+}
+
 __DEVICE__ float3 apply_tint_preset(float3 rgb,int tint_id){
   if(tint_id<=0)return rgb;
   // V2: correction direction fixed.
@@ -224,9 +384,10 @@ __DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,f
   int src=clampi((int)(wb_source+0.5f),0,24);
   int tgt=clampi((int)(wb_target+0.5f),0,5);
   int tint=clampi((int)(tint_preset+0.5f),0,6);
+  int wp=clampi((int)(creative_whitepoint+0.5f),0,12);
 
   // Exact neutral bypass: source selection alone does not alter the image.
-  if(tgt==0 && tint==0)
+  if(tgt==0 && tint==0 && wp==7)
     return make_float3(p_R,p_G,p_B);
 
   float3 lin=lc3_decode(make_float3(p_R,p_G,p_B));
@@ -237,5 +398,9 @@ __DEVICE__ float3 transform(int p_Width,int p_Height,int p_X,int p_Y,float p_R,f
   if(tint!=0)
     lin=apply_tint_preset(lin,tint);
 
+  if(wp!=7)
+    lin=ll_apply_creative_white(lin,wp);
+
+  lin=ll_encode_domain_guard(lin);
   return lc3_encode(lin);
 }
