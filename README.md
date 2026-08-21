@@ -24,18 +24,22 @@ The white-point control preserves the former Keystone D93/D75/D65/D60/D55/D50 be
 
 ## Placement
 
-Place LookLab WB after the camera/input transform has produced AWG3 / LogC3 EI800 and before FilmMatrix, palette work, lens/optical character, Keystone, and the ODT.
+LookLab WB is optional in the current tree. Keystone now includes Bradford Kelvin/Tint correction, so leave LookLab WB off when Keystone is handling white balance.
 
 Recommended Resolve node tree:
 
-1. Camera/CST or input transform to AWG3 / LogC3 EI800
-2. LookLab WB
-3. FilmMatrix or film-matrix prep
-4. [Advanced Toner](https://github.com/wbrisenold/AdvancedToner)
-5. [PresenceOFX](https://github.com/wbrisenold/PresenceOFX)
-6. [Keystone](https://github.com/wbrisenold/Keystone)
-7. ODT/display transform
-8. [LUTManagerOFX](https://github.com/wbrisenold/LUTManagerOFX), optional after the ODT
+1. Camera/CST to AWG3 / LogC3 EI800
+2. [PresenceOFX](https://github.com/wbrisenold/PresenceOFX)
+3. [Keystone](https://github.com/wbrisenold/Keystone)
+4. PrimeraSkin
+5. HB Color Separation DCTL
+6. KH Gamut Compressor
+7. Referent LogC3 -> Rec.709 ODT LUT
+8. FilmBox Rec.709 look LUT
+9. MonoNodes Balance Charts
+
+Use LookLab WB between the camera transform and PresenceOFX only when a shot
+intentionally needs its separate source/target or creative white-point behavior.
 
 FilmMatrix credit: the PD FilmMatrix node in this tree refers to [`PD-LogC3-FilmMatrix.dctl`](https://github.com/mikaelsundell/photographic-dctls/blob/master/PD-LogC3-FilmMatrix.dctl) from Mikael Sundell's `photographic-dctls` repository. It is a separate third-party node and is not included in this repository.
 
